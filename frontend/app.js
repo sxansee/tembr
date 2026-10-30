@@ -9,7 +9,7 @@ const FADERS = [
 ];
 
 const SAMPLE_RATE = 48000;
-const CHUNK_MS = 400;
+const CHUNK_MS = 200;
 
 const state = {
   running: false,
@@ -405,7 +405,7 @@ function fillSelect(id, devices) {
 // доступа к настройкам другого приложения. Оставляем как ручной пункт,
 // а не притворяемся, что можем это проверить.
 const DIAG_STEPS = [
-  { id: 'mic', label: 'Микрофон обнаружен', check: checkMic },
+  { id: 'mic', label: 'Устройство аудиовхода доступно', check: checkMic },
   { id: 'engine', label: 'Движок RVC запущен', check: checkEngine },
   { id: 'cable', label: 'Виртуальный кабель в списке устройств', check: checkCable },
   { id: 'discord', label: 'Discord слушает CABLE Output — проверь руками', check: null },

@@ -15,7 +15,9 @@ FastAPI serves the frontend and converts WebSocket audio frames through
 
 All sample-rate settings are validated. The frontend requests a 48 kHz
 AudioContext, then tells the server that rate after the WebSocket opens.
-Inference is dispatched off the ASGI event loop and serialized with model swaps.
+It sends 200 ms frames; the real-time adapter requires frames longer than
+100 ms for its edge context. Inference runs off the ASGI event loop and is
+serialized with model swaps.
 
 Do not expose this server to a network. It is a local desktop tool without
 authentication. Model files are user-supplied and are not stored in Git.

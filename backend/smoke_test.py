@@ -12,7 +12,7 @@ from websockets.asyncio.client import connect
 BASE_URL = "http://127.0.0.1:7860"
 WS_URL = "ws://127.0.0.1:7860/ws/convert"
 SAMPLE_RATE = 48000
-CHUNK_SAMPLES = SAMPLE_RATE * 2 // 5
+CHUNK_SAMPLES = SAMPLE_RATE // 5
 
 
 def check_health() -> dict:
@@ -28,6 +28,16 @@ def check_health() -> dict:
 async def check_stream() -> None:
     async with connect(WS_URL, origin=BASE_URL) as websocket:
         await websocket.send(json.dumps({"type": "settings", "sample_rate": SAMPLE_RATE}))
+
+        short_audio = np.zeros(SAMPLE_RATE // 10, dtype=np.float32)
+        await websocket.send(short_audio.tobytes())
+        short_response = await websocket.recv()
+        if not isinstance(short_response, str):
+            raise RuntimeError("Сервер должен отклонять чанки длительностью 100 мс")
+        short_error = json.loads(short_response)
+        if short_error.get("type") != "error" or "100" not in short_error.get("message", ""):
+            raise RuntimeError(f"Неожиданный ответ для короткого чанка: {short_error}")
+
         for frame_number in range(3):
             start = frame_number * CHUNK_SAMPLES
             samples = np.arange(start, start + CHUNK_SAMPLES, dtype=np.float32)

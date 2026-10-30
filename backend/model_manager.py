@@ -20,14 +20,9 @@ import numpy as np
 import torch
 import torchaudio
 
-# HuBERT-семейство контент-энкодеров (на нём построен RVC) почти всегда
-# работает на 16кГц. В README inferrvc пример вызывает load_torchaudio(),
-# которая возвращает (aud, sr), но sr потом нигде не используется при
-# самой конвертации — сильный признак, что вход ожидается уже на
-# фиксированной частоте, и сам load_torchaudio ресемплирует под неё.
-# Мы шлём сырые чанки с фронтенда напрямую (не через load_torchaudio),
-# так что ресемплим сами. НЕ подтверждено эмпирически на 100% — если
-# голос на выходе окажется "поплывшим" по высоте, начни проверку отсюда.
+# inferrvc treats tensor inputs without a `frequency` attribute as already 16 kHz.
+# WebSocket audio arrives directly from the UI, not through load_torchaudio(),
+# so resample it explicitly before passing it to the RVC pipeline.
 TARGET_SR = 16000
 REALTIME_CONTEXT_SECONDS = 0.1
 
@@ -171,6 +166,9 @@ class ModelManager:
             raise ValueError("Ожидается непустой монофонический аудиочанк")
         if not torch.isfinite(audio_chunk).all():
             raise ValueError("В аудиочанке обнаружены NaN или бесконечные значения")
+        minimum_samples = round(input_sample_rate * REALTIME_CONTEXT_SECONDS) + 1
+        if audio_chunk.numel() < minimum_samples:
+            raise ValueError("Длительность аудиочанка должна быть больше 100 мс")
         if gain_in != 1.0:
             audio_chunk = audio_chunk * gain_in
 
