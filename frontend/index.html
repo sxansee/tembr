@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Тембр — voice engine</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="brand">
+        <span id="status-dot" class="status-dot"></span>
+        <div>
+          <h1 class="wordmark">Тембр</h1>
+          <p class="subtitle">voice engine v0.2</p>
+        </div>
+      </div>
+      <span class="badge">локально</span>
+    </header>
+
+    <p class="eyebrow">Голоса</p>
+    <div id="voice-row" class="voice-row"></div>
+    <input type="file" id="voice-upload-input" multiple accept=".pth,.index" style="display:none" />
+
+    <section class="panel">
+      <div class="device-row">
+        <label class="device-field">
+          <span>вход</span>
+          <select id="input-select"></select>
+        </label>
+        <label class="device-field">
+          <span>выход</span>
+          <select id="output-select"></select>
+        </label>
+      </div>
+      <div class="hero-controls">
+        <button id="start-btn" class="start-btn">
+          <span id="start-label">Старт</span>
+        </button>
+        <span id="status-text" class="status-text">ожидание</span>
+      </div>
+      <div class="meters">
+        <div class="meter-row">
+          <span class="meter-label">вход</span>
+          <div id="meter-in" class="meter"></div>
+        </div>
+        <div class="meter-row">
+          <span class="meter-label">выход</span>
+          <div id="meter-out" class="meter"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Настройки</p>
+      <div id="faders"></div>
+    </section>
+
+    <section class="panel">
+      <div class="diag-head">
+        <p class="eyebrow" style="margin-bottom:0">Диагностика</p>
+        <button id="diag-btn" class="ghost-btn">Проверить</button>
+      </div>
+      <div id="diag-list" class="diag-list"></div>
+    </section>
+
+  <p class="footer-note">Тембр v0.2 · <span id="conn-status">не подключено</span> <span id="stream-metrics"></span></p>
+  </div>
+
+  <audio id="output-audio" autoplay></audio>
+
+  <script src="app.js"></script>
+</body>
+</html>
