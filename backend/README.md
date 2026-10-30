@@ -1,8 +1,10 @@
 # Backend
 
 FastAPI serves the frontend and converts WebSocket audio frames through
-`inferrvc`. The server binds to `127.0.0.1:7860`; run it through the root
-`run.bat` so the Python 3.11 CUDA environment and working directory are set up.
+`inferrvc`. The desktop app binds its engine to an available port on
+`127.0.0.1`; a direct development launch defaults to `127.0.0.1:7860`. Run
+`run.bat` from the root so the Python 3.11 CUDA environment and desktop window
+are set up.
 
 ## Endpoints
 

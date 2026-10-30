@@ -1,9 +1,9 @@
 @echo off
 setlocal
-cd /d "%~dp0backend"
+cd /d "%~dp0"
 
-set "PYTHON=venv\Scripts\python.exe"
-set "MARKER=venv\.tembr-install-complete"
+set "PYTHON=backend\venv\Scripts\python.exe"
+set "MARKER=backend\venv\.tembr-install-complete"
 
 if not exist "%PYTHON%" goto :install
 if not exist "%MARKER%" goto :install
@@ -26,7 +26,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%PYTHON%" py -3.11 -m venv venv
+if not exist "%PYTHON%" py -3.11 -m venv backend\venv
 if not exist "%PYTHON%" (
     echo Could not create the Python 3.11 environment.
     pause
@@ -68,23 +68,47 @@ set MSSdk=1
 if errorlevel 1 goto :install_failed
 "%PYTHON%" -m pip install --no-build-isolation https://github.com/One-sixth/fairseq/archive/44800430a728c2216fd1cf1e8daa672f50dfacba.zip
 if errorlevel 1 goto :install_failed
-"%PYTHON%" -m pip install -r requirements.txt
+"%PYTHON%" -m pip install -r backend\requirements.txt
 if errorlevel 1 goto :install_failed
 
 "%PYTHON%" -c "import torch; assert torch.cuda.is_available(), 'CUDA is unavailable'; print('CUDA:', torch.version.cuda, '-', torch.cuda.get_device_name(0))"
 if errorlevel 1 goto :install_failed
-"%PYTHON%" -c "import fastapi, inferrvc, numpy, torchaudio, uvicorn; print('Tembr dependencies are ready')"
+"%PYTHON%" -c "import fastapi, inferrvc, numpy, torchaudio, uvicorn; print('Tembr audio engine is ready')"
 if errorlevel 1 goto :install_failed
 > "%MARKER%" echo requirements-v1
 
 :run
-"%PYTHON%" launcher.py
-if errorlevel 1 echo Tembr stopped with an error. See the messages above.
-pause
+where dotnet >nul 2>&1
+if errorlevel 1 (
+    echo The .NET 8 SDK is required to build the Tembr desktop window.
+    echo Install the .NET 8 SDK, then run Tembr again.
+    pause
+    exit /b 1
+)
+
+tasklist /FI "IMAGENAME eq Tembr.exe" 2>nul | find /I "Tembr.exe" >nul
+if not errorlevel 1 (
+    echo Tembr is already running. Switch to its open window.
+    exit /b 0
+)
+
+echo Building the Tembr desktop application...
+dotnet publish desktop\Tembr.Desktop.csproj -c Release -r win-x64 --self-contained true -o backend\desktop-publish
+if errorlevel 1 goto :desktop_failed
+
+echo Starting Tembr Voice Studio...
+backend\desktop-publish\Tembr.exe
+if errorlevel 1 echo Tembr closed with an error. Check "%LOCALAPPDATA%\Tembr\logs\tembr-desktop.log"
 exit /b
 
 :install_failed
 echo.
 echo Dependency setup failed. Keep this console open and share the error above.
+pause
+exit /b 1
+
+:desktop_failed
+echo.
+echo Could not build the native desktop window. Verify the .NET 8 SDK and internet access.
 pause
 exit /b 1

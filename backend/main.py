@@ -75,10 +75,12 @@ def autoload_default_model():
 @app.get("/health")
 def health():
     import torch
+    cuda_available = bool(torch.cuda.is_available())
     return {
         "status": "ok",
         "active_model": manager.active_name,
-        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_available": cuda_available,
+        "gpu_name": torch.cuda.get_device_name(0) if cuda_available else None,
     }
 
 

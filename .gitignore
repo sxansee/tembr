@@ -1,5 +1,6 @@
 backend/venv/
 backend/.venv/
+backend/desktop-publish/
 backend/__pycache__/
 backend/**/*.py[cod]
 backend/models/*.pth
@@ -7,6 +8,10 @@ backend/models/*.index
 backend/models/.upload-*
 backend/.server-test.pid
 *.log
+.vs/
+desktop/bin/
+desktop/obj/
+desktop/publish/
 .env
 .env.*
 !.env.example

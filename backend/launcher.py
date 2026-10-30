@@ -1,29 +1,28 @@
-"""Start the local server and open the UI after startup finishes."""
+"""Start Tembr's loopback-only audio engine.
 
+The native Windows shell owns the app window and starts this process. Keeping
+the engine in a child process lets the UI release CUDA and audio resources
+cleanly when its window closes.
+"""
+
+import os
 import socket
 import sys
-import threading
-import time
-import webbrowser
 
 import uvicorn
 
 
 HOST = "127.0.0.1"
-PORT = 7860
-URL = f"http://{HOST}:{PORT}/"
-
-
-def open_when_ready(server: uvicorn.Server) -> None:
-    while not server.started and not server.should_exit:
-        time.sleep(0.2)
-    if server.started:
-        webbrowser.open(URL)
+PORT = int(os.environ.get("TEMBR_PORT", "7860"))
 
 
 def main() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     # Reserve the port before Uvicorn runs application startup. Model loading
-    # takes several seconds; without this pre-bind, a second instance would
+    # takes several seconds; without this pre-bind a second instance would
     # load the model and only then discover that another server owns the port.
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -40,10 +39,8 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     config = uvicorn.Config("main:app", host=HOST, port=PORT, log_level="info")
-    server = uvicorn.Server(config)
-    threading.Thread(target=open_when_ready, args=(server,), daemon=True).start()
     try:
-        server.run(sockets=[listener])
+        uvicorn.Server(config).run(sockets=[listener])
     finally:
         listener.close()
 

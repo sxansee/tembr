@@ -1,15 +1,18 @@
-// ===== Конфигурация =====
-let VOICES = []; // заполняется с бэкенда через /model/list — см. loadVoiceList()
-
+// ===== Параметры и состояние приложения =====
+const DEFAULTS = { pitch: 0, index_rate: 0.5, gain_in: 1, gain_out: 1 };
 const FADERS = [
-  { key: 'pitch', label: 'Тон', min: -12, max: 12, step: 1, value: 0, signed: true },
-  { key: 'index_rate', label: 'Индекс', min: 0, max: 1, step: 0.05, value: 0.5 },
-  { key: 'gain_in', label: 'Усиление · вход', min: 0, max: 2, step: 0.1, value: 1 },
-  { key: 'gain_out', label: 'Усиление · выход', min: 0, max: 2, step: 0.1, value: 1 },
+  { key: 'pitch', label: 'Высота тона', hint: 'Меняет высоту голоса', min: -12, max: 12, step: 1, group: 'main' },
+  { key: 'index_rate', label: 'Сходство голоса', hint: 'Насколько точно передавать тембр модели', min: 0, max: 1, step: 0.05, group: 'main' },
+  { key: 'gain_in', label: 'Уровень микрофона', hint: 'Усиление исходного сигнала', min: 0, max: 2, step: 0.1, group: 'advanced' },
+  { key: 'gain_out', label: 'Громкость результата', hint: 'Уровень обработанного голоса', min: 0, max: 2, step: 0.1, group: 'advanced' },
 ];
 
 const SAMPLE_RATE = 48000;
 const CHUNK_MS = 200;
+const STORAGE_KEY = 'tembr.studio.settings.v1';
+let VOICES = [];
+let toastTimer;
+let waveFrame = 0;
 
 const state = {
   running: false,
@@ -22,256 +25,492 @@ const state = {
   mediaStream: null,
   activeName: null,
   droppedChunks: 0,
-  settings: { pitch: 0, index_rate: 0.5, gain_in: 1, gain_out: 1 },
+  inputLevel: 0,
+  outputLevel: 0,
+  cudaAvailable: null,
+  gpuName: null,
+  settings: { ...DEFAULTS },
 };
 
-// ===== Мелкие утилиты =====
-function injectCornerDots() {
-  document.querySelectorAll('.panel').forEach((panel) => {
-    ['tl', 'tr', 'bl', 'br'].forEach((pos) => {
-      const dot = document.createElement('span');
-      dot.className = `corner-dot ${pos}`;
-      panel.appendChild(dot);
+// ===== Уведомления и параметры =====
+function showNotice(title, message) {
+  document.getElementById('notice-title').textContent = title;
+  document.getElementById('notice-message').textContent = message;
+  document.getElementById('notice').hidden = false;
+  document.getElementById('notice').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function hideNotice() {
+  document.getElementById('notice').hidden = true;
+}
+
+function showToast(message) {
+  const toast = document.getElementById('toast');
+  document.getElementById('toast-message').textContent = message;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
+}
+
+function restoreSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    for (const fader of FADERS) {
+      const value = Number(saved[fader.key]);
+      if (Number.isFinite(value) && value >= fader.min && value <= fader.max) {
+        state.settings[fader.key] = value;
+      }
+    }
+  } catch (error) {
+    console.warn('[Тембр] Не удалось восстановить настройки:', error);
+  }
+}
+
+function saveSettings() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.settings)); }
+  catch (error) { console.warn('[Тембр] Не удалось сохранить настройки:', error); }
+}
+
+function formatFaderValue(fader, value) {
+  if (fader.key === 'pitch') return `${value > 0 ? '+' : ''}${value} st`;
+  if (fader.key === 'index_rate') return `${Math.round(value * 100)}%`;
+  return `${Number(value).toFixed(1)}×`;
+}
+
+function renderFaders() {
+  document.getElementById('faders').replaceChildren();
+  document.getElementById('advanced-faders').replaceChildren();
+
+  for (const fader of FADERS) {
+    const container = document.getElementById(fader.group === 'main' ? 'faders' : 'advanced-faders');
+    const wrap = document.createElement('div');
+    wrap.className = 'fader';
+
+    const head = document.createElement('div');
+    head.className = 'fader-head';
+    const labelWrap = document.createElement('label');
+    labelWrap.className = 'fader-label-wrap';
+    labelWrap.htmlFor = `fader-${fader.key}`;
+    labelWrap.textContent = fader.label;
+    const hint = document.createElement('span');
+    hint.className = 'fader-help';
+    hint.textContent = fader.hint;
+    labelWrap.append(hint);
+    const value = document.createElement('span');
+    value.className = 'fader-value';
+    value.textContent = formatFaderValue(fader, state.settings[fader.key]);
+    head.append(labelWrap, value);
+
+    const input = document.createElement('input');
+    input.id = `fader-${fader.key}`;
+    input.type = 'range';
+    input.min = fader.min;
+    input.max = fader.max;
+    input.step = fader.step;
+    input.value = state.settings[fader.key];
+    input.setAttribute('aria-label', fader.label);
+    input.addEventListener('input', () => {
+      const nextValue = Math.round(Number(input.value) * 100) / 100;
+      state.settings[fader.key] = nextValue;
+      value.textContent = formatFaderValue(fader, nextValue);
+      saveSettings();
+      sendSettings({ [fader.key]: nextValue });
     });
-  });
+
+    wrap.append(head, input);
+    container.append(wrap);
+  }
 }
 
-function rms(float32arr) {
-  let sum = 0;
-  for (let i = 0; i < float32arr.length; i++) sum += float32arr[i] * float32arr[i];
-  return Math.sqrt(sum / float32arr.length);
+function resetSettings() {
+  state.settings = { ...DEFAULTS };
+  saveSettings();
+  renderFaders();
+  sendSettings(state.settings);
+  showToast('Настройки голоса сброшены.');
 }
 
-// ===== Сегментные метры =====
-function createMeter(container) {
-  const segments = 28;
+// ===== Уровни и визуализация сигнала =====
+function createMeter(container, valueNode) {
+  const segmentCount = 30;
   const bars = [];
-  for (let i = 0; i < segments; i++) {
-    const bar = document.createElement('div');
+  container.replaceChildren();
+  for (let i = 0; i < segmentCount; i++) {
+    const bar = document.createElement('span');
     bar.className = 'segment';
-    container.appendChild(bar);
+    container.append(bar);
     bars.push(bar);
   }
-  return function setLevel(level01) {
-    const lit = Math.round(Math.max(0, Math.min(1, level01)) * segments);
-    bars.forEach((bar, i) => {
-      const isLit = i < lit;
-      bar.classList.toggle('lit', isLit);
-      bar.classList.toggle('lit-hot', isLit && i / segments > 0.6 && i / segments <= 0.85);
-      bar.classList.toggle('lit-peak', isLit && i / segments > 0.85);
+
+  return (level) => {
+    const normalized = Math.max(0, Math.min(1, level));
+    const lit = Math.round(normalized * segmentCount);
+    bars.forEach((bar, index) => {
+      const on = index < lit;
+      bar.classList.toggle('lit', on);
+      bar.classList.toggle('lit-hot', on && index / segmentCount > 0.66 && index / segmentCount <= 0.86);
+      bar.classList.toggle('lit-peak', on && index / segmentCount > 0.86);
     });
+    container.setAttribute('aria-valuenow', String(Math.round(normalized * 100)));
+    valueNode.textContent = normalized > 0.0001
+      ? `${Math.max(-60, Math.round(20 * Math.log10(normalized)))} dB`
+      : '−∞ dB';
   };
 }
 
 let setInLevel = () => {};
 let setOutLevel = () => {};
 
-// ===== Голоса =====
-async function loadVoiceList() {
-  try {
-    const res = await fetch('/model/list');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    VOICES = (data.voices || []).map((v) => ({
-      name: v.name,
-      tag: v.index ? 'RVC' : 'RVC · без индекса',
-      file: v.file,
-      index: v.index,
-    }));
-    state.activeName = data.active || null;
-  } catch (e) {
-    console.error('[Тембр] Не удалось получить список голосов:', e);
-    VOICES = [];
+function drawWave() {
+  const canvas = document.getElementById('wave-canvas');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(rect.width * pixelRatio));
+  const height = Math.max(1, Math.round(rect.height * pixelRatio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
   }
+  const context = canvas.getContext('2d');
+  context.clearRect(0, 0, width, height);
+  const count = Math.max(48, Math.floor(rect.width / 7));
+  const center = height * 0.5;
+  const spacing = width / count;
+  const activeLevel = Math.max(state.inputLevel, state.outputLevel);
+  const pulse = state.running ? 1 : 0.16;
+  const time = performance.now() / 600;
+  for (let i = 0; i < count; i++) {
+    const envelope = Math.sin((i / count) * Math.PI) ** 0.45;
+    const wave = Math.abs(Math.sin(i * 0.48 + time) * 0.55 + Math.cos(i * 0.19 - time * 0.7) * 0.45);
+    const heightRatio = (0.08 + activeLevel * 0.72 + wave * pulse * (0.14 + activeLevel * 0.36)) * envelope;
+    const barHeight = Math.max(2, height * heightRatio * 0.66);
+    const x = i * spacing + spacing * 0.34;
+    const alpha = 0.32 + envelope * 0.55;
+    context.fillStyle = i > count * 0.69 ? `rgba(217,255,114,${alpha})` : `rgba(101,214,202,${alpha})`;
+    context.beginPath();
+    context.roundRect(x, center - barHeight / 2, Math.max(1, spacing * 0.34), barHeight, 2 * pixelRatio);
+    context.fill();
+  }
+  waveFrame = requestAnimationFrame(drawWave);
 }
 
-function renderVoices(selectName) {
-  const row = document.getElementById('voice-row');
-  row.innerHTML = '';
+function setConnectionStatus(text, kind = 'idle') {
+  document.getElementById('conn-status').textContent = text;
+  const statusDot = document.getElementById('status-dot');
+  statusDot.classList.remove('ready', 'running', 'error');
+  if (kind !== 'idle') statusDot.classList.add(kind);
+}
 
-  if (VOICES.length === 0) {
-    const hint = document.createElement('p');
-    hint.className = 'voice-tag';
-    hint.textContent = 'Пока пусто — добавь .pth файл';
-    row.appendChild(hint);
+function updateLiveState() {
+  const statusText = document.getElementById('status-text');
+  const pill = document.getElementById('engine-pill');
+  const signalState = document.getElementById('signal-state');
+  const signalLabel = document.getElementById('signal-label');
+  const start = document.getElementById('start-btn');
+
+  pill.classList.remove('ready', 'running', 'error');
+  signalState.classList.remove('running', 'waiting');
+  if (state.running) {
+    statusText.textContent = 'В ЭФИРЕ';
+    pill.classList.add('running');
+    signalState.classList.add('running');
+    signalLabel.textContent = 'ОБРАБОТКА АКТИВНА';
+  } else if (state.starting) {
+    statusText.textContent = 'ПОДКЛЮЧЕНИЕ';
+    signalState.classList.add('waiting');
+    signalLabel.textContent = 'ПОДКЛЮЧАЕМ УСТРОЙСТВА';
+  } else {
+    statusText.textContent = 'ОЖИДАНИЕ';
+    pill.classList.add('ready');
+    signalLabel.textContent = 'ГОТОВ К СТАРТУ';
   }
 
-  VOICES.forEach((v) => {
-    const isSelected = selectName ? v.name === selectName : v.name === state.activeName;
-    const btn = document.createElement('button');
-    btn.className = 'voice-chip' + (isSelected ? ' active' : '');
-    const name = document.createElement('span');
-    name.className = 'voice-name';
-    name.textContent = v.name;
-    const tag = document.createElement('span');
-    tag.className = 'voice-tag';
-    tag.textContent = v.tag;
-    btn.append(name, tag);
-    btn.addEventListener('click', () => {
-      loadVoice(v).then((loaded) => {
-        if (loaded) renderVoices(v.name);
-      });
-    });
-    row.appendChild(btn);
-  });
+  if (state.cudaAvailable === false) {
+    pill.classList.remove('ready');
+    pill.classList.add('error');
+    statusText.textContent = 'GPU НЕ НАЙДЕНА';
+    signalLabel.textContent = 'ПРОВЕРЬ NVIDIA GPU';
+  }
 
-  const addBtn = document.createElement('button');
-  addBtn.className = 'voice-chip voice-add';
-  addBtn.id = 'voice-add-btn';
-  addBtn.title = 'Добавить голос (.pth + .index)';
-  addBtn.innerHTML = '<span class="voice-add-icon">+</span>';
-  addBtn.addEventListener('click', () => document.getElementById('voice-upload-input').click());
-  row.appendChild(addBtn);
+  const label = document.getElementById('start-label');
+  document.getElementById('start-play-icon').hidden = state.running || state.starting;
+  document.getElementById('start-stop-icon').hidden = !state.running;
+  start.classList.toggle('running', state.running);
+  start.disabled = state.starting || (!state.running && (!state.activeName || state.cudaAvailable !== true));
+  label.textContent = state.starting
+    ? 'Подключаем…'
+    : (state.running ? 'Остановить преобразование' : (state.activeName ? 'Начать преобразование' : 'Выбери голос'));
+
+  const help = document.getElementById('start-help');
+  if (state.cudaAvailable === false) {
+    help.textContent = 'Для обработки в реальном времени требуется доступная NVIDIA GPU.';
+  } else if (state.running) {
+    help.textContent = 'Обработка активна. Нажми кнопку или Ctrl + Shift + Space, чтобы остановить.';
+  } else if (state.starting) {
+    help.textContent = 'Разреши доступ к микрофону, если Windows покажет запрос.';
+  } else if (!state.activeName) {
+    help.textContent = 'Добавь модель .pth и выбери голос, чтобы включить преобразование.';
+  } else {
+    help.textContent = 'Нажми кнопку или Ctrl + Shift + Space, чтобы начать.';
+  }
+
+  if (state.running) setConnectionStatus('Обработка звука', 'running');
+  else if (state.cudaAvailable === true) setConnectionStatus('Движок готов', 'ready');
+  else if (state.cudaAvailable === false) setConnectionStatus('NVIDIA GPU недоступна', 'error');
+}
+
+// ===== Модели голосов =====
+async function loadVoiceList() {
+  const response = await fetch('/model/list');
+  if (!response.ok) throw new Error(`Список моделей: HTTP ${response.status}`);
+  const data = await response.json();
+  VOICES = (data.voices || []).map((voice) => ({
+    name: voice.name,
+    tag: voice.index ? 'RVC · индекс' : 'RVC · без индекса',
+    file: voice.file,
+    index: voice.index,
+  }));
+  state.activeName = data.active || null;
+  renderVoices();
+}
+
+function pluralVoices(count) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} голос`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} голоса`;
+  return `${count} голосов`;
+}
+
+function initials(name) {
+  return name.split(/[\s_-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'R';
+}
+
+function renderVoices() {
+  const row = document.getElementById('voice-row');
+  row.replaceChildren();
+  document.getElementById('voice-count').textContent = pluralVoices(VOICES.length);
+  document.getElementById('selected-voice-name').textContent = state.activeName || 'не выбран';
+
+  if (VOICES.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'voice-empty';
+    const mark = document.createElement('span');
+    mark.className = 'voice-empty-mark';
+    mark.textContent = '♪';
+    const title = document.createElement('strong');
+    title.textContent = 'Библиотека пока пуста';
+    const hint = document.createElement('p');
+    hint.textContent = 'Добавь свою RVC-модель .pth и, если есть, соответствующий индекс .index.';
+    const add = createAddVoiceButton(true);
+    empty.append(mark, title, hint, add);
+    row.append(empty);
+  } else {
+    for (const voice of VOICES) {
+      const selected = voice.name === state.activeName;
+      const button = document.createElement('button');
+      button.className = `voice-chip${selected ? ' active' : ''}`;
+      button.type = 'button';
+      button.setAttribute('aria-pressed', String(selected));
+      button.title = `Использовать голос «${voice.name}»`;
+
+      const avatar = document.createElement('span');
+      avatar.className = 'voice-avatar';
+      avatar.textContent = initials(voice.name);
+      const copy = document.createElement('span');
+      copy.className = 'voice-chip-copy';
+      const name = document.createElement('span');
+      name.className = 'voice-name';
+      name.textContent = voice.name;
+      const tag = document.createElement('span');
+      tag.className = 'voice-tag';
+      tag.textContent = voice.tag;
+      copy.append(name, tag);
+      const check = document.createElement('span');
+      check.className = 'voice-check';
+      check.textContent = selected ? '✓' : '';
+      button.append(avatar, copy, check);
+      button.addEventListener('click', async () => {
+        if (selected || button.disabled) return;
+        button.disabled = true;
+        const loaded = await loadVoice(voice);
+        if (loaded) {
+          renderVoices();
+          hideNotice();
+          showToast(`Выбран голос «${voice.name}».`);
+        } else {
+          button.disabled = false;
+        }
+      });
+      row.append(button);
+    }
+    row.append(createAddVoiceButton(false));
+  }
+
+  updateLiveState();
+}
+
+function createAddVoiceButton(emptyState) {
+  const button = document.createElement('button');
+  button.id = emptyState ? 'voice-add-empty' : 'voice-add-btn';
+  button.className = 'voice-chip voice-add';
+  button.type = 'button';
+  button.title = 'Добавить голос (.pth и необязательный .index)';
+  const icon = document.createElement('span');
+  icon.className = 'voice-add-icon';
+  icon.textContent = '+';
+  const label = document.createElement('span');
+  label.className = 'voice-add-label';
+  label.textContent = emptyState ? 'Выбрать модель' : 'Добавить голос';
+  button.append(icon, label);
+  if (!emptyState) {
+    const hint = document.createElement('span');
+    hint.className = 'voice-add-hint';
+    hint.textContent = '.PTH  +  .INDEX';
+    button.append(hint);
+  }
+  button.addEventListener('click', () => document.getElementById('voice-upload-input').click());
+  return button;
+}
+
+async function loadVoice(voice) {
+  setConnectionStatus(`Загружаем «${voice.name}»…`, 'idle');
+  try {
+    const query = new URLSearchParams({ filename: voice.file });
+    if (voice.index) query.set('index', voice.index);
+    const response = await fetch(`/model/load?${query}`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    state.activeName = data.loaded || voice.name;
+    updateLiveState();
+    setConnectionStatus('Движок готов', 'ready');
+    return true;
+  } catch (error) {
+    console.error('[Тембр] Не удалось загрузить модель:', error);
+    showNotice('Не удалось загрузить голос', error.message);
+    setConnectionStatus('Ошибка модели', 'error');
+    return false;
+  }
 }
 
 function setupVoiceUpload() {
   const input = document.getElementById('voice-upload-input');
   input.addEventListener('change', async () => {
-    const files = Array.from(input.files);
-    const pth = files.find((f) => f.name.toLowerCase().endsWith('.pth'));
-    const index = files.find((f) => f.name.toLowerCase().endsWith('.index'));
-
+    const files = Array.from(input.files || []);
+    const pth = files.find((file) => file.name.toLowerCase().endsWith('.pth'));
+    const index = files.find((file) => file.name.toLowerCase().endsWith('.index'));
     if (!pth) {
-      alert('Нужен файл .pth с моделью (можно выбрать сразу и .index вместе с ним).');
+      showNotice('Выбери файл модели', 'Нужен файл .pth. Соответствующий .index можно выбрать вместе с ним.');
       input.value = '';
       return;
     }
 
-    const addBtn = document.getElementById('voice-add-btn');
-    const originalLabel = addBtn.innerHTML;
-    addBtn.innerHTML = '<span class="voice-add-icon">…</span>';
-    addBtn.disabled = true;
-
+    const addButton = document.querySelector('.voice-add');
+    if (addButton) addButton.disabled = true;
+    hideNotice();
+    setConnectionStatus('Добавляем голос…', 'idle');
     const formData = new FormData();
     formData.append('pth_file', pth);
     if (index) formData.append('index_file', index);
 
     try {
-      const res = await fetch('/model/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (!res.ok) {
-        alert('Не загрузилось: ' + (data.detail || 'неизвестная ошибка'));
-        return;
-      }
-      if (!index) {
-        alert(`Файл ${data.uploaded} загружен без .index. Голос работает без retrieval-индекса.`);
-      }
+      const response = await fetch('/model/upload', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
       await loadVoiceList();
-      const voice = VOICES.find((v) => v.file === data.uploaded);
-      if (voice && await loadVoice(voice)) renderVoices(voice.name);
-    } catch (e) {
-      alert('Ошибка загрузки: ' + e.message);
+      const uploaded = VOICES.find((voice) => voice.file === data.uploaded);
+      if (uploaded) await loadVoice(uploaded);
+      renderVoices();
+      setConnectionStatus('Движок готов', 'ready');
+      showToast(index ? 'Модель и индекс добавлены.' : 'Модель добавлена. Она будет работать без индекса.');
+    } catch (error) {
+      showNotice('Не удалось добавить голос', error.message);
+      setConnectionStatus('Ошибка загрузки', 'error');
     } finally {
-      addBtn.innerHTML = originalLabel;
-      addBtn.disabled = false;
       input.value = '';
+      const add = document.querySelector('.voice-add');
+      if (add) add.disabled = false;
     }
   });
 }
 
-async function loadVoice(voice) {
-  try {
-    setConnStatus(`загрузка: ${voice.name}`);
-    const query = new URLSearchParams({ filename: voice.file });
-    if (voice.index) query.set('index', voice.index);
-    const res = await fetch(`/model/load?${query}`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    state.activeName = data.loaded || voice.name;
-    updateStartAvailability();
-    setConnStatus('модель готова');
-    return true;
-  } catch (e) {
-    console.error('[Тембр] Не удалось загрузить модель:', e);
-    setConnStatus(`ошибка модели: ${e.message}`);
-    return false;
-  }
+// ===== Сервер и WebSocket =====
+async function loadEngineStatus() {
+  const response = await fetch('/health');
+  if (!response.ok) throw new Error(`Аудиодвижок: HTTP ${response.status}`);
+  const data = await response.json();
+  state.cudaAvailable = Boolean(data.cuda_available);
+  state.gpuName = data.gpu_name || null;
+  document.getElementById('stream-metrics').textContent = state.cudaAvailable
+    ? `GPU · ${state.gpuName || 'NVIDIA готова'} · инференс — · пропуски 0`
+    : 'GPU · не найдена';
+  updateLiveState();
+  return data;
 }
 
-// ===== Фейдеры =====
-function renderFaders() {
-  const container = document.getElementById('faders');
-  FADERS.forEach((f) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'fader';
-
-    const head = document.createElement('div');
-    head.className = 'fader-head';
-    const label = document.createElement('span');
-    label.textContent = f.label;
-    const value = document.createElement('span');
-    value.className = 'fader-value';
-    value.textContent = formatFaderValue(f, f.value);
-    head.append(label, value);
-
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = f.min;
-    input.max = f.max;
-    input.step = f.step;
-    input.value = f.value;
-    input.addEventListener('input', (e) => {
-      const v = Math.round(parseFloat(e.target.value) * 100) / 100;
-      state.settings[f.key] = v;
-      value.textContent = formatFaderValue(f, v);
-      sendSettings({ [f.key]: v });
-    });
-
-    wrap.append(head, input);
-    container.appendChild(wrap);
-  });
-}
-
-function formatFaderValue(f, v) {
-  return (f.signed && v > 0 ? '+' : '') + v;
-}
-
-// ===== WebSocket =====
 function sendSettings(partial) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+  if (state.ws?.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify({ type: 'settings', ...partial }));
   }
 }
 
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws/convert`);
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${protocol}://${location.host}/ws/convert`);
   ws.binaryType = 'arraybuffer';
   state.ws = ws;
+
   return new Promise((resolve, reject) => {
+    let opened = false;
     const timeout = setTimeout(() => {
       ws.close();
-      reject(new Error('сервер не ответил за 10 секунд'));
+      reject(new Error('Аудиодвижок не ответил за 10 секунд.'));
     }, 10000);
+
     ws.onopen = () => {
+      opened = true;
       clearTimeout(timeout);
       ws.send(JSON.stringify({ type: 'settings', ...state.settings, sample_rate: SAMPLE_RATE }));
-      setConnStatus('подключено');
+      setConnectionStatus('Обработка звука', 'running');
       resolve();
     };
     ws.onclose = () => {
       state.inFlight = false;
       clearTimeout(timeout);
-      setConnStatus('отключено');
-      if (ws.readyState !== WebSocket.OPEN) reject(new Error('WebSocket закрыт'));
+      if (state.ws === ws) {
+        state.ws = null;
+        if (state.running) {
+          state.running = false;
+          void releaseAudio(false).finally(() => {
+            updateLiveState();
+            showNotice('Связь с аудиодвижком потеряна', 'Проверь работу GPU и повторно запусти преобразование.');
+          });
+        } else {
+          setConnectionStatus('Движок отключён', 'idle');
+        }
+      }
+      if (!opened) reject(new Error('Соединение с аудиодвижком закрыто.'));
     };
     ws.onerror = () => {
       clearTimeout(timeout);
-      setConnStatus('ошибка соединения');
-      reject(new Error('не удалось соединиться с сервером'));
+      if (!opened) reject(new Error('Не удалось соединиться с аудиодвижком.'));
     };
     ws.onmessage = (event) => {
       if (typeof event.data === 'string') {
-        let msg;
-        try { msg = JSON.parse(event.data); } catch { return; }
-        if (msg.type === 'level') {
-          setOutLevel(msg.out || 0);
-          const metrics = document.getElementById('stream-metrics');
-          if (metrics) metrics.textContent = `${msg.inference_ms ?? '—'} мс · пропущено ${state.droppedChunks}`;
-        } else if (msg.type === 'error') {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        if (message.type === 'level') {
+          state.outputLevel = message.out || 0;
+          setOutLevel(state.outputLevel);
+          const gpu = state.gpuName ? `GPU · ${state.gpuName}` : 'GPU';
+          document.getElementById('stream-metrics').textContent =
+            `${gpu} · инференс ${message.inference_ms ?? '—'} мс · пропуски ${state.droppedChunks}`;
+        } else if (message.type === 'error') {
           state.inFlight = false;
-          console.error('[Тембр] Ошибка конвертации:', msg.message);
-          setConnStatus(`ошибка конвертации: ${msg.message}`);
+          console.error('[Тембр] Ошибка конвертации:', message.message);
+          setConnectionStatus(`Ошибка конвертации: ${message.message}`, 'error');
+          showNotice('Ошибка обработки голоса', message.message);
         }
         return;
       }
@@ -282,28 +521,34 @@ function connectWS() {
   });
 }
 
-function setConnStatus(text) {
-  const elm = document.getElementById('conn-status');
-  if (elm) elm.textContent = text;
+// ===== Захват и воспроизведение аудио =====
+function readStoredDevice(key) {
+  try { return localStorage.getItem(`tembr.device.${key}`) || ''; }
+  catch { return ''; }
 }
 
-// ===== Аудио-граф =====
+function storeDevice(key, value) {
+  try { localStorage.setItem(`tembr.device.${key}`, value); }
+  catch (error) { console.warn('[Тембр] Не удалось сохранить аудиоустройство:', error); }
+}
+
 async function startAudio() {
-  if (!state.activeName) throw new Error('сначала загрузи или выбери голос');
+  if (!state.activeName) throw new Error('Сначала выбери или добавь голосовую модель.');
+  if (state.cudaAvailable !== true) throw new Error('Для обработки голоса требуется доступная NVIDIA GPU.');
   state.droppedChunks = 0;
+  state.inputLevel = 0;
+  state.outputLevel = 0;
+
   const inputDeviceId = document.getElementById('input-select').value;
   const outputDeviceId = document.getElementById('output-select').value;
+  const audioConstraints = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  };
+  if (inputDeviceId) audioConstraints.deviceId = { exact: inputDeviceId };
+  state.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
 
-  state.mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-    },
-  });
-
-  // --- захват ---
   state.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' });
   await state.audioCtx.resume();
   await state.audioCtx.audioWorklet.addModule('worklets/capture-processor.js');
@@ -312,8 +557,8 @@ async function startAudio() {
     processorOptions: { chunkSize: Math.round(state.audioCtx.sampleRate * CHUNK_MS / 1000) },
   });
   source.connect(state.captureNode);
-  // Некоторые браузеры замораживают process() у узлов без пути к destination —
-  // держим узел "живым" тихим (gain=0) путём до выхода, звук наружу не идёт.
+
+  // Keep the capture worklet alive without monitoring the dry microphone.
   const silentGain = state.audioCtx.createGain();
   silentGain.gain.value = 0;
   state.captureNode.connect(silentGain);
@@ -321,210 +566,328 @@ async function startAudio() {
 
   state.captureNode.port.onmessage = (event) => {
     const chunk = event.data;
-    setInLevel(Math.min(rms(chunk) * 4, 1));
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      if (state.inFlight) {
-        state.droppedChunks++;
-        return;
-      }
-      try {
-        state.inFlight = true;
-        state.ws.send(chunk.buffer);
-      } catch (e) {
-        state.inFlight = false;
-        setConnStatus(`ошибка отправки: ${e.message}`);
-      }
+    let squares = 0;
+    for (let i = 0; i < chunk.length; i++) squares += chunk[i] * chunk[i];
+    state.inputLevel = Math.min(Math.sqrt(squares / chunk.length) * 4, 1);
+    setInLevel(state.inputLevel);
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    if (state.inFlight) {
+      state.droppedChunks++;
+      return;
+    }
+    try {
+      state.inFlight = true;
+      state.ws.send(chunk.buffer);
+    } catch (error) {
+      state.inFlight = false;
+      setConnectionStatus(`Ошибка отправки: ${error.message}`, 'error');
     }
   };
 
-  // --- воспроизведение ---
   await state.audioCtx.audioWorklet.addModule('worklets/playback-processor.js');
-  state.playbackNode = new AudioWorkletNode(state.audioCtx, 'playback-processor', {
-    outputChannelCount: [1],
-  });
-  const dest = state.audioCtx.createMediaStreamDestination();
-  state.playbackNode.connect(dest);
+  state.playbackNode = new AudioWorkletNode(state.audioCtx, 'playback-processor', { outputChannelCount: [1] });
+  const destination = state.audioCtx.createMediaStreamDestination();
+  state.playbackNode.connect(destination);
 
-  const audioEl = document.getElementById('output-audio');
-  audioEl.srcObject = dest.stream;
-  if (outputDeviceId && typeof audioEl.setSinkId === 'function') {
+  const output = document.getElementById('output-audio');
+  output.srcObject = destination.stream;
+  if (outputDeviceId && typeof output.setSinkId === 'function') {
     try {
-      await audioEl.setSinkId(outputDeviceId);
-    } catch (e) {
-      console.warn('[Тембр] setSinkId не сработал (это нормально в Firefox — там его нет):', e);
+      await output.setSinkId(outputDeviceId);
+    } catch (error) {
+      console.warn('[Тембр] Выходное устройство пока не разрешено:', error);
+      showNotice('Голос пока идёт на системный выход', 'После запуска выбери устройство в списке и подтверди его в появившемся окне выбора звука.');
     }
   }
-  await audioEl.play();
-
+  await output.play();
   await connectWS();
   await populateDevices();
 }
 
-async function stopAudio() {
+async function releaseAudio(closeSocket = true) {
   const ws = state.ws;
   state.ws = null;
   state.inFlight = false;
-  state.mediaStream?.getTracks().forEach((t) => t.stop());
-  ws?.close();
-  await state.audioCtx?.close();
-  state.mediaStream = null;
+  state.mediaStream?.getTracks().forEach((track) => track.stop());
+  if (closeSocket) ws?.close();
+  const audioContext = state.audioCtx;
   state.audioCtx = null;
+  if (audioContext && audioContext.state !== 'closed') {
+    try { await audioContext.close(); } catch (error) { console.warn('[Тембр] Не удалось закрыть AudioContext:', error); }
+  }
+  state.mediaStream = null;
   state.captureNode = null;
   state.playbackNode = null;
+  document.getElementById('output-audio').srcObject = null;
+  state.inputLevel = 0;
+  state.outputLevel = 0;
   setInLevel(0);
   setOutLevel(0);
-  setConnStatus('не подключено');
 }
 
-// ===== Устройства =====
+async function stopAudio() {
+  await releaseAudio(true);
+  setConnectionStatus('Движок готов', state.cudaAvailable ? 'ready' : 'idle');
+}
+
+async function toggleAudio() {
+  if (state.starting) return;
+  hideNotice();
+  if (state.running) {
+    state.starting = true;
+    updateLiveState();
+    await stopAudio();
+    state.running = false;
+    state.starting = false;
+    updateLiveState();
+    return;
+  }
+
+  state.starting = true;
+  updateLiveState();
+  try {
+    await startAudio();
+    state.running = true;
+    setConnectionStatus('Обработка звука', 'running');
+  } catch (error) {
+    console.error('[Тембр] Не удалось начать обработку:', error);
+    await releaseAudio(true);
+    state.running = false;
+    const permissionError = error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError';
+    showNotice(
+      permissionError ? 'Нет доступа к микрофону' : 'Не удалось запустить обработку',
+      permissionError
+        ? 'Разреши Tembr доступ к микрофону в Windows: Параметры → Конфиденциальность и безопасность → Микрофон.'
+        : error.message,
+    );
+    setConnectionStatus('Ошибка запуска', 'error');
+  } finally {
+    state.starting = false;
+    updateLiveState();
+  }
+}
+
+// ===== Устройства и маршрутизация =====
 async function populateDevices() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
-    fillSelect('input-select', devices.filter((d) => d.kind === 'audioinput'));
-    fillSelect('output-select', devices.filter((d) => d.kind === 'audiooutput'));
-  } catch (e) {
-    console.warn('[Тембр] Не удалось получить список устройств:', e);
+    const inputs = devices.filter((device) => device.kind === 'audioinput');
+    const outputs = devices.filter((device) => device.kind === 'audiooutput');
+    fillSelect('input-select', inputs, readStoredDevice('input'), 'Микрофон');
+    fillSelect('output-select', outputs, readStoredDevice('output'), 'Устройство вывода');
+
+    const notice = document.getElementById('device-notice');
+    if (!inputs.length) {
+      notice.textContent = 'Не найден микрофон. Подключи устройство и нажми кнопку обновления.';
+      notice.hidden = false;
+    } else if (!outputs.length) {
+      notice.textContent = 'Не найдено устройство вывода. Проверь подключение динамиков или наушников.';
+      notice.hidden = false;
+    } else {
+      notice.hidden = true;
+    }
+  } catch (error) {
+    console.warn('[Тембр] Не удалось получить список устройств:', error);
+    const notice = document.getElementById('device-notice');
+    notice.textContent = 'Не удалось получить список аудиоустройств. Проверь разрешение на микрофон в Windows.';
+    notice.hidden = false;
   }
 }
 
-function fillSelect(id, devices) {
+function fillSelect(id, devices, preferredId, fallbackLabel) {
   const select = document.getElementById(id);
-  const current = select.value;
-  select.innerHTML = '';
-  devices.forEach((d, i) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId;
-    opt.textContent = d.label || `Устройство ${i + 1}`;
-    select.appendChild(opt);
+  const current = select.value || preferredId;
+  select.replaceChildren();
+  if (!devices.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Устройство не найдено';
+    select.append(option);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  devices.forEach((device, index) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.textContent = device.label || `${fallbackLabel} ${index + 1}`;
+    select.append(option);
   });
-  if (current && devices.some((d) => d.deviceId === current)) select.value = current;
+  if (current && devices.some((device) => device.deviceId === current)) select.value = current;
+  else if (preferredId && devices.some((device) => device.deviceId === preferredId)) select.value = preferredId;
+}
+
+async function changeInputDevice() {
+  const select = document.getElementById('input-select');
+  storeDevice('input', select.value);
+  if (!state.running) return;
+  state.starting = true;
+  state.running = false;
+  updateLiveState();
+  await releaseAudio(true);
+  try {
+    await startAudio();
+    state.running = true;
+    showToast('Микрофон переключён.');
+  } catch (error) {
+    await releaseAudio(true);
+    showNotice('Не удалось переключить микрофон', error.message);
+    setConnectionStatus('Ошибка микрофона', 'error');
+  } finally {
+    state.starting = false;
+    updateLiveState();
+  }
+}
+
+async function changeOutputDevice(event) {
+  const select = event.target;
+  const requestedDeviceId = select.value;
+  const previousDeviceId = readStoredDevice('output');
+  let outputDeviceId = requestedDeviceId;
+
+  // WebView2 may require an explicit output-device selection before a
+  // non-default sink can be used. This API must be called from the user's
+  // device-selection gesture, so keep it here rather than during startup.
+  if (typeof navigator.mediaDevices.selectAudioOutput === 'function') {
+    try {
+      const selectedDevice = await navigator.mediaDevices.selectAudioOutput({ deviceId: requestedDeviceId });
+      outputDeviceId = selectedDevice.deviceId;
+    } catch (error) {
+      select.value = previousDeviceId && Array.from(select.options).some((option) => option.value === previousDeviceId)
+        ? previousDeviceId
+        : (select.options[0]?.value || '');
+      showNotice(
+        'Выходное устройство не подтверждено',
+        error.name === 'NotAllowedError'
+          ? 'Выбор отменён. Звук останется на системном выходе; выбери устройство ещё раз, если нужен другой маршрут.'
+          : 'Подтверди устройство в появившемся окне выбора звука, затем повтори попытку.',
+      );
+      return;
+    }
+  }
+
+  storeDevice('output', outputDeviceId);
+  if (outputDeviceId !== requestedDeviceId) {
+    await populateDevices();
+    select.value = outputDeviceId;
+  }
+  if (!state.running) {
+    showToast('Устройство вывода выбрано.');
+    return;
+  }
+  const output = document.getElementById('output-audio');
+  if (typeof output.setSinkId !== 'function') {
+    showNotice('Смена выхода недоступна', 'Текущая аудиосреда не поддерживает выбор выходного устройства.');
+    return;
+  }
+  try {
+    await output.setSinkId(outputDeviceId);
+    showToast('Устройство вывода переключено.');
+  } catch (error) {
+    showNotice('Не удалось переключить выход', error.message);
+  }
 }
 
 // ===== Диагностика =====
-// "discord" намеренно без авто-проверки: у веб-страницы физически нет
-// доступа к настройкам другого приложения. Оставляем как ручной пункт,
-// а не притворяемся, что можем это проверить.
-const DIAG_STEPS = [
-  { id: 'mic', label: 'Устройство аудиовхода доступно', check: checkMic },
-  { id: 'engine', label: 'Движок RVC запущен', check: checkEngine },
-  { id: 'cable', label: 'Виртуальный кабель в списке устройств', check: checkCable },
-  { id: 'discord', label: 'Discord слушает CABLE Output — проверь руками', check: null },
-];
-
-async function checkMic() {
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices.some((d) => d.kind === 'audioinput');
-}
-
-async function checkEngine() {
-  try {
-    const res = await fetch('/health');
-    const data = await res.json();
-    return Boolean(data.active_model);
-  } catch {
-    return false;
-  }
-}
-
-async function checkCable() {
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices.some((d) => d.kind === 'audiooutput' && /cable/i.test(d.label || ''));
-}
-
 async function runDiagnostics() {
   const list = document.getElementById('diag-list');
-  const btn = document.getElementById('diag-btn');
-  btn.disabled = true;
-  list.innerHTML = '';
-  for (const step of DIAG_STEPS) {
+  const buttons = [document.getElementById('diag-btn'), document.getElementById('diag-run-btn')];
+  buttons.forEach((button) => { button.disabled = true; });
+  list.replaceChildren();
+
+  const checks = [];
+  try {
+    const health = await loadEngineStatus();
+    checks.push({ ok: true, label: 'Аудиодвижок доступен', detail: 'локальный сервер отвечает' });
+    checks.push({ ok: health.cuda_available, label: 'NVIDIA GPU', detail: health.cuda_available ? (health.gpu_name || 'готова к обработке') : 'GPU не найдена' });
+    checks.push({ ok: Boolean(health.active_model), label: 'Модель голоса загружена', detail: health.active_model || 'добавь RVC-модель в библиотеку' });
+  } catch (error) {
+    checks.push({ ok: false, label: 'Аудиодвижок', detail: error.message });
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter((device) => device.kind === 'audioinput');
+    const outputs = devices.filter((device) => device.kind === 'audiooutput');
+    checks.push({ ok: inputs.length > 0, label: 'Микрофон', detail: inputs.length ? `${inputs.length} доступно` : 'подключи микрофон' });
+    const cable = outputs.some((device) => /cable/i.test(device.label || ''));
+    checks.push({ optional: true, ok: cable, label: 'Виртуальный кабель', detail: cable ? 'доступен' : 'нужен для передачи в Discord' });
+  } catch {
+    checks.push({ ok: false, label: 'Аудиоустройства', detail: 'нет доступа к списку устройств' });
+  }
+  checks.push({ manual: true, label: 'Настройка Discord', detail: 'микрофон Discord → CABLE Output' });
+
+  for (const check of checks) {
     const row = document.createElement('div');
-    row.className = 'diag-row';
-    row.innerHTML = `<span class="diag-icon">…</span><span class="diag-label">${step.label}</span>`;
-    list.appendChild(row);
-
-    if (step.check === null) {
-      row.classList.add('diag-manual');
-      row.querySelector('.diag-icon').textContent = '!';
-      continue;
-    }
-    await new Promise((r) => setTimeout(r, 150));
-    let ok = false;
-    try { ok = await step.check(); } catch (e) { console.warn('[Тембр] Проверка не удалась:', e); }
-    row.classList.add(ok ? 'diag-ok' : 'diag-warn');
-    row.querySelector('.diag-icon').textContent = ok ? '✓' : '✕';
+    row.className = `diag-row ${check.manual ? 'diag-manual' : (check.ok ? 'diag-ok' : (check.optional ? 'diag-manual' : 'diag-warn'))}`;
+    const icon = document.createElement('span');
+    icon.className = 'diag-icon';
+    icon.textContent = check.manual ? 'i' : (check.ok ? '✓' : (check.optional ? 'i' : '!'));
+    const label = document.createElement('span');
+    label.className = 'diag-label';
+    label.textContent = check.label;
+    const detail = document.createElement('span');
+    detail.className = 'diag-detail';
+    detail.textContent = check.detail;
+    row.append(icon, label, detail);
+    list.append(row);
   }
-  btn.disabled = false;
+  buttons.forEach((button) => { button.disabled = false; });
 }
 
-// ===== Старт/стоп =====
-function updateStartButton() {
-  const button = document.getElementById('start-btn');
-  button.classList.toggle('running', state.running);
-  button.disabled = state.starting || (!state.running && !state.activeName);
-  document.getElementById('status-dot').classList.toggle('running', state.running);
-  document.getElementById('start-label').textContent = state.starting ? 'Запуск…' : (state.running ? 'Стоп' : 'Старт');
-  document.getElementById('status-text').textContent = state.starting ? 'подключение' : (state.running ? 'обработка активна' : 'ожидание');
-}
-
-function updateStartAvailability() {
-  updateStartButton();
-}
-
-// ===== Инициализация =====
+// ===== Запуск и настройка интерфейса =====
 async function init() {
-  injectCornerDots();
-  setInLevel = createMeter(document.getElementById('meter-in'));
-  setOutLevel = createMeter(document.getElementById('meter-out'));
-  await loadVoiceList();
-  renderVoices();
-  if (!state.activeName && VOICES.length) {
-    if (await loadVoice(VOICES[0])) renderVoices(VOICES[0].name);
-  }
-  setupVoiceUpload();
+  restoreSettings();
+  setInLevel = createMeter(document.getElementById('meter-in'), document.getElementById('meter-in-value'));
+  setOutLevel = createMeter(document.getElementById('meter-out'), document.getElementById('meter-out-value'));
   renderFaders();
-  populateDevices();
-  updateStartButton();
+  setupVoiceUpload();
+  drawWave();
 
-  document.getElementById('start-btn').addEventListener('click', async () => {
-    if (!state.running && !state.starting) {
-      state.starting = true;
-      updateStartButton();
-      try {
-        await startAudio();
-        state.running = true;
-      } catch (e) {
-        console.error('[Тембр] Не удалось запустить:', e);
-        await stopAudio();
-        setConnStatus('ошибка: ' + e.message);
-      }
-    } else {
-      await stopAudio();
-      state.running = false;
-    }
-    state.starting = false;
-    updateStartButton();
-  });
-
+  document.getElementById('start-btn').addEventListener('click', toggleAudio);
+  document.getElementById('reset-settings').addEventListener('click', resetSettings);
+  document.getElementById('notice-close').addEventListener('click', hideNotice);
+  document.getElementById('refresh-devices').addEventListener('click', () => populateDevices());
   document.getElementById('diag-btn').addEventListener('click', runDiagnostics);
+  document.getElementById('diag-run-btn').addEventListener('click', runDiagnostics);
+  document.getElementById('input-select').addEventListener('change', changeInputDevice);
+  document.getElementById('output-select').addEventListener('change', changeOutputDevice);
+  document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach((nav) => nav.classList.toggle('active', nav === item));
+  }));
 
-  document.getElementById('output-select').addEventListener('change', async (event) => {
-    if (!state.running) return;
-    const audioEl = document.getElementById('output-audio');
-    if (typeof audioEl.setSinkId !== 'function') {
-      setConnStatus('выбор выхода доступен в Chrome/Edge');
-      return;
+  window.addEventListener('keydown', (event) => {
+    if (event.ctrlKey && event.shiftKey && event.code === 'Space') {
+      event.preventDefault();
+      void toggleAudio();
     }
-    try { await audioEl.setSinkId(event.target.value); }
-    catch (e) { setConnStatus(`ошибка выбора выхода: ${e.message}`); }
+    if (event.key === 'Escape' && state.running) void toggleAudio();
+  });
+  window.addEventListener('resize', () => {
+    if (waveFrame) cancelAnimationFrame(waveFrame);
+    drawWave();
   });
 
-  document.getElementById('input-select').addEventListener('change', () => {
-    if (state.running) setConnStatus('чтобы сменить микрофон, останови и запусти снова');
-  });
+  try {
+    await loadEngineStatus();
+    await loadVoiceList();
+    if (!state.activeName && VOICES.length) {
+      const loaded = await loadVoice(VOICES[0]);
+      if (loaded) renderVoices();
+    }
+    await populateDevices();
+    setConnectionStatus(state.cudaAvailable ? 'Движок готов' : 'NVIDIA GPU недоступна', state.cudaAvailable ? 'ready' : 'error');
+  } catch (error) {
+    console.error('[Тембр] Не удалось подготовить студию:', error);
+    setConnectionStatus('Ошибка подключения', 'error');
+    showNotice('Не удалось загрузить студию', error.message);
+  }
+  updateLiveState();
 
-  if (navigator.mediaDevices.addEventListener) {
+  if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', populateDevices);
   }
+  window.addEventListener('pagehide', () => { void releaseAudio(true); });
 }
 
 init();
