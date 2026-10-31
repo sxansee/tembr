@@ -27,7 +27,7 @@ from pathlib import Path
 from pathlib import PureWindowsPath
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from model_manager import ModelManager, inspect_checkpoint
@@ -181,6 +181,76 @@ async def upload_model(pth_file: UploadFile = File(...), index_file: UploadFile 
     finally:
         for path in staged_paths:
             path.unlink(missing_ok=True)
+
+
+@app.post("/model/index")
+async def upload_index(model_file: str = Form(...), index_file: UploadFile = File(...)):
+    """Attach an index to an existing model without re-uploading its checkpoint."""
+    model_name = Path(model_file).name
+    if model_name != model_file or not model_name.lower().endswith(".pth"):
+        raise HTTPException(status_code=400, detail="Ожидается имя модели .pth без пути")
+    model_path = MODEL_DIR / model_name
+    if not model_path.is_file():
+        raise HTTPException(status_code=404, detail="Модель не найдена в библиотеке")
+
+    index_name = index_file.filename
+    if not index_name or Path(index_name).name != index_name or PureWindowsPath(index_name).name != index_name:
+        raise HTTPException(status_code=400, detail="Имя индекса не должно содержать путь")
+    if not index_name.lower().endswith(".index"):
+        raise HTTPException(status_code=400, detail="Ожидается файл .index")
+    if Path(model_name).stem.lower() not in Path(index_name).stem.lower():
+        raise HTTPException(status_code=400, detail="Имя .index должно содержать имя модели, чтобы связать файлы")
+
+    index_path = MODEL_DIR / index_name
+    if index_path.exists():
+        raise HTTPException(status_code=409, detail="Индекс с таким именем уже есть в библиотеке")
+
+    fd, temp_name = tempfile.mkstemp(prefix=".upload-", suffix=".tmp", dir=MODEL_DIR)
+    os.close(fd)
+    staged_index = Path(temp_name)
+    try:
+        total = 0
+        with staged_index.open("wb") as output:
+            while chunk := await index_file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_INDEX_BYTES:
+                    raise HTTPException(status_code=413, detail="Файл превышает допустимый размер")
+                output.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=400, detail="Файл пустой")
+        os.replace(staged_index, index_path)
+        return {"model": model_name, "index": index_name}
+    finally:
+        staged_index.unlink(missing_ok=True)
+
+
+@app.delete("/model/{model_filename}")
+def delete_model(model_filename: str):
+    """Remove a model and its unshared matching index files."""
+    if Path(model_filename).name != model_filename or not model_filename.lower().endswith(".pth"):
+        raise HTTPException(status_code=400, detail="Ожидается имя модели .pth без пути")
+
+    model_path = MODEL_DIR / model_filename
+    if not model_path.is_file():
+        raise HTTPException(status_code=404, detail="Модель не найдена в библиотеке")
+
+    model_stem = model_path.stem.lower()
+    other_models = [path.stem.lower() for path in MODEL_DIR.glob("*.pth") if path.name != model_filename]
+    matching_indices = [
+        path for path in MODEL_DIR.glob("*.index")
+        if model_stem in path.stem.lower()
+        and not any(other_stem in path.stem.lower() for other_stem in other_models)
+    ]
+
+    unloaded = manager.unload_if_active(model_path.stem)
+    model_path.unlink()
+    for index_path in matching_indices:
+        index_path.unlink(missing_ok=True)
+    return {
+        "deleted": model_filename,
+        "removed_indices": [path.name for path in matching_indices],
+        "unloaded": unloaded,
+    }
 
 
 @app.post("/settings")

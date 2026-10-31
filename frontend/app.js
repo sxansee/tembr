@@ -350,12 +350,68 @@ function renderVoices() {
           button.disabled = false;
         }
       });
-      row.append(button);
+      const entry = document.createElement('div');
+      entry.className = 'voice-entry';
+      const actions = document.createElement('div');
+      actions.className = 'voice-actions';
+      if (!voice.index) {
+        const indexButton = document.createElement('button');
+        indexButton.className = 'voice-action';
+        indexButton.type = 'button';
+        indexButton.textContent = '+ Индекс';
+        indexButton.title = `Добавить индекс к голосу «${voice.name}»`;
+        indexButton.addEventListener('click', () => {
+          const input = document.getElementById('index-upload-input');
+          input.dataset.modelFile = voice.file;
+          input.click();
+        });
+        actions.append(indexButton);
+      }
+      const deleteButton = document.createElement('button');
+      deleteButton.className = 'voice-action voice-delete';
+      deleteButton.type = 'button';
+      deleteButton.textContent = 'Удалить';
+      deleteButton.title = `Удалить модель «${voice.name}»`;
+      deleteButton.addEventListener('click', () => { void deleteVoice(voice); });
+      actions.append(deleteButton);
+      entry.append(button, actions);
+      row.append(entry);
     }
     row.append(createAddVoiceButton(false));
   }
 
   updateLiveState();
+}
+
+async function deleteVoice(voice) {
+  const locale = document.documentElement.lang;
+  const prompts = {
+    ru: `Удалить модель «${voice.name}» и её связанный индекс из библиотеки?`,
+    en: `Remove “${voice.name}” and its linked index from the library?`,
+    es: `¿Eliminar “${voice.name}” y su índice de la biblioteca?`,
+    de: `„${voice.name}“ und den zugehörigen Index aus der Bibliothek entfernen?`,
+  };
+  if (!window.confirm(prompts[locale] || prompts.ru)) return;
+
+  if (state.running && state.activeName === voice.name) {
+    state.starting = true;
+    updateLiveState();
+    await stopAudio();
+    state.running = false;
+    state.starting = false;
+  }
+
+  try {
+    const response = await fetch(`/model/${encodeURIComponent(voice.file)}`, { method: 'DELETE' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    await loadVoiceList();
+    showToast('Модель удалена из библиотеки.');
+  } catch (error) {
+    showNotice('Не удалось удалить модель', error.message);
+  } finally {
+    updateLiveState();
+  }
 }
 
 function createAddVoiceButton(emptyState) {
@@ -438,6 +494,45 @@ function setupVoiceUpload() {
       input.value = '';
       const add = document.querySelector('.voice-add');
       if (add) add.disabled = false;
+    }
+  });
+}
+
+function setupIndexUpload() {
+  const input = document.getElementById('index-upload-input');
+  input.addEventListener('change', async () => {
+    const index = input.files?.[0];
+    const modelFile = input.dataset.modelFile;
+    const voice = VOICES.find((item) => item.file === modelFile);
+    if (!index || !voice) return;
+
+    const wasRunning = state.running && state.activeName === voice.name;
+    if (wasRunning) {
+      state.starting = true;
+      updateLiveState();
+      await stopAudio();
+      state.running = false;
+      state.starting = false;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('model_file', voice.file);
+      formData.append('index_file', index);
+      const response = await fetch('/model/index', { method: 'POST', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      await loadVoiceList();
+      const updatedVoice = VOICES.find((item) => item.file === voice.file);
+      if (updatedVoice) await loadVoice(updatedVoice);
+      renderVoices();
+      showToast('Индекс добавлен к модели.');
+    } catch (error) {
+      showNotice('Не удалось добавить индекс', error.message);
+    } finally {
+      input.value = '';
+      delete input.dataset.modelFile;
+      updateLiveState();
     }
   });
 }
@@ -849,6 +944,7 @@ async function init() {
   setOutLevel = createMeter(document.getElementById('meter-out'), document.getElementById('meter-out-value'));
   renderFaders();
   setupVoiceUpload();
+  setupIndexUpload();
   drawWave();
 
   document.getElementById('start-btn').addEventListener('click', toggleAudio);

@@ -159,6 +159,9 @@
     'Текущая аудиосреда не поддерживает выбор выходного устройства.': 'This audio environment does not support output device selection.',
     'Устройство вывода переключено.': 'Output device switched.', 'Не удалось переключить выход': 'Could not switch output',
     'Выбран голос': 'Voice selected', 'Не удалось загрузить студию': 'Could not load the studio',
+    '+ Индекс': '+ Index', 'Удалить': 'Remove', 'Индекс добавлен к модели.': 'Index added to the model.',
+    'Модель удалена из библиотеки.': 'Model removed from the library.', 'Не удалось удалить модель': 'Could not remove model',
+    'Не удалось добавить индекс': 'Could not add index',
   });
 
   Object.assign(translations.es, {
@@ -184,6 +187,9 @@
     'Смена выхода недоступна': 'Cambio de salida no disponible', 'Текущая аудиосреда не поддерживает выбор выходного устройства.': 'Este entorno de audio no permite elegir la salida.',
     'Устройство вывода переключено.': 'Salida de audio cambiada.', 'Не удалось переключить выход': 'No se pudo cambiar la salida',
     'Выбран голос': 'Voz seleccionada', 'Не удалось загрузить студию': 'No se pudo cargar el estudio',
+    '+ Индекс': '+ Índice', 'Удалить': 'Eliminar', 'Индекс добавлен к модели.': 'Índice añadido al modelo.',
+    'Модель удалена из библиотеки.': 'Modelo eliminado de la biblioteca.', 'Не удалось удалить модель': 'No se pudo eliminar el modelo',
+    'Не удалось добавить индекс': 'No se pudo añadir el índice',
   });
 
   Object.assign(translations.de, {
@@ -209,6 +215,9 @@
     'Смена выхода недоступна': 'Ausgabewechsel nicht verfügbar', 'Текущая аудиосреда не поддерживает выбор выходного устройства.': 'Diese Audio-Umgebung unterstützt keine Auswahl des Ausgabegeräts.',
     'Устройство вывода переключено.': 'Ausgabegerät gewechselt.', 'Не удалось переключить выход': 'Ausgabegerät konnte nicht gewechselt werden',
     'Выбран голос': 'Stimme ausgewählt', 'Не удалось загрузить студию': 'Studio konnte nicht geladen werden',
+    '+ Индекс': '+ Index', 'Удалить': 'Entfernen', 'Индекс добавлен к модели.': 'Index zum Modell hinzugefügt.',
+    'Модель удалена из библиотеки.': 'Modell aus der Bibliothek entfernt.', 'Не удалось удалить модель': 'Modell konnte nicht entfernt werden',
+    'Не удалось добавить индекс': 'Index konnte nicht hinzugefügt werden',
   });
 
   const reverse = Object.fromEntries(Object.entries(translations).map(([locale, entries]) => [

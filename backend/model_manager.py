@@ -138,6 +138,15 @@ class ModelManager:
             self._active_name = Path(model_name).stem
             return self._active_name
 
+    def unload_if_active(self, model_name: str) -> bool:
+        """Release a loaded model before its files are removed from disk."""
+        with self._lock:
+            if self._active_name != model_name:
+                return False
+            self._active = None
+            self._active_name = None
+            return True
+
     @property
     def active_name(self):
         return self._active_name
