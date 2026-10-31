@@ -43,12 +43,17 @@ jobs:
       - name: Compile installer
         shell: pwsh
         run: |
-          $compiler = Get-ChildItem -Path "$env:ProgramFiles\Inno Setup*", "${env:ProgramFiles(x86)}\Inno Setup*" -Filter ISCC.exe -Recurse | Select-Object -First 1
+          $compiler = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
           if (-not $compiler) { throw "Inno Setup compiler was not found." }
           $version = $env:RELEASE_TAG.TrimStart('v')
           New-Item -ItemType Directory -Force -Path installer/output | Out-Null
           Push-Location installer
-          try { & $compiler.FullName "/DAppVersion=$version" Tembr.iss; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+          try { & $compiler "/DAppVersion=$version" Tembr.iss; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
           finally { Pop-Location }
 
       - name: Create GitHub release
