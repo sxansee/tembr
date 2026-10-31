@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing or new version tag to build (for example, v0.1.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,9 +17,13 @@ permissions:
 jobs:
   windows-release:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Install .NET SDK
         uses: actions/setup-dotnet@v4
@@ -23,7 +33,7 @@ jobs:
       - name: Publish desktop application
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:RELEASE_TAG.TrimStart('v')
           dotnet publish desktop/Tembr.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Version=$version -o desktop/publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -35,7 +45,7 @@ jobs:
         run: |
           $compiler = Get-ChildItem -Path "$env:ProgramFiles\Inno Setup*", "${env:ProgramFiles(x86)}\Inno Setup*" -Filter ISCC.exe -Recurse | Select-Object -First 1
           if (-not $compiler) { throw "Inno Setup compiler was not found." }
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:RELEASE_TAG.TrimStart('v')
           New-Item -ItemType Directory -Force -Path installer/output | Out-Null
           Push-Location installer
           try { & $compiler.FullName "/DAppVersion=$version" Tembr.iss; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
@@ -46,5 +56,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          gh release create $env:GITHUB_REF_NAME "installer/output/Tembr-Setup-$version.exe" --title "Tembr $version" --notes-file RELEASE_NOTES.md
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          $asset = "installer/output/Tembr-Setup-$version.exe"
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG $asset --clobber
+          } else {
+            gh release create $env:RELEASE_TAG $asset --title "Tembr $version" --notes-file RELEASE_NOTES.md
+          }
