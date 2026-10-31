@@ -1,0 +1,50 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish desktop application
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          dotnet publish desktop/Tembr.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Version=$version -o desktop/publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $compiler = Get-ChildItem -Path "$env:ProgramFiles\Inno Setup*", "${env:ProgramFiles(x86)}\Inno Setup*" -Filter ISCC.exe -Recurse | Select-Object -First 1
+          if (-not $compiler) { throw "Inno Setup compiler was not found." }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          New-Item -ItemType Directory -Force -Path installer/output | Out-Null
+          Push-Location installer
+          try { & $compiler.FullName "/DAppVersion=$version" Tembr.iss; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+          finally { Pop-Location }
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          gh release create $env:GITHUB_REF_NAME "installer/output/Tembr-Setup-$version.exe" --title "Tembr $version" --notes-file RELEASE_NOTES.md

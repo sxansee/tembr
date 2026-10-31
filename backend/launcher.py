@@ -32,7 +32,7 @@ def main() -> None:
     except OSError as exc:
         listener.close()
         print(
-            f"Порт {PORT} уже занят. Останови предыдущий экземпляр Тембра "
+            f"Порт {PORT} уже занят. Останови предыдущий экземпляр Tembr "
             f"или освободи этот порт. Подробности: {exc}",
             file=sys.stderr,
         )

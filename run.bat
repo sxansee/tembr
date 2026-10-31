@@ -78,26 +78,28 @@ if errorlevel 1 goto :install_failed
 > "%MARKER%" echo requirements-v1
 
 :run
-where dotnet >nul 2>&1
-if errorlevel 1 (
-    echo The .NET 8 SDK is required to build the Tembr desktop window.
-    echo Install the .NET 8 SDK, then run Tembr again.
-    pause
-    exit /b 1
-)
-
 tasklist /FI "IMAGENAME eq Tembr.exe" 2>nul | find /I "Tembr.exe" >nul
 if not errorlevel 1 (
     echo Tembr is already running. Switch to its open window.
     exit /b 0
 )
 
+if exist desktop\publish\Tembr.exe goto :run_app
+where dotnet >nul 2>&1
+if errorlevel 1 (
+    echo The .NET 8 SDK is required to build the Tembr desktop window.
+    echo Install it first, or install Tembr from the release setup package.
+    pause
+    exit /b 1
+)
+
 echo Building the Tembr desktop application...
-dotnet publish desktop\Tembr.Desktop.csproj -c Release -r win-x64 --self-contained true -o backend\desktop-publish
+dotnet publish desktop\Tembr.Desktop.csproj -c Release -r win-x64 --self-contained true -o desktop\publish
 if errorlevel 1 goto :desktop_failed
 
+:run_app
 echo Starting Tembr Voice Studio...
-backend\desktop-publish\Tembr.exe
+desktop\publish\Tembr.exe
 if errorlevel 1 echo Tembr closed with an error. Check "%LOCALAPPDATA%\Tembr\logs\tembr-desktop.log"
 exit /b
 

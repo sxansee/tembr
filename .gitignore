@@ -12,6 +12,7 @@ backend/.server-test.pid
 desktop/bin/
 desktop/obj/
 desktop/publish/
+installer/output/
 .env
 .env.*
 !.env.example

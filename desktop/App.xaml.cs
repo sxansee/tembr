@@ -3,7 +3,7 @@ using System.Windows;
 
 namespace Tembr.Desktop;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private Mutex? _instanceMutex;
     private bool _ownsMutex;
@@ -15,9 +15,9 @@ public partial class App : Application
         {
             _instanceMutex.Dispose();
             _instanceMutex = null;
-            MessageBox.Show(
-                "Тембр уже запущен. Переключись на его открытое окно.",
-                "Тембр",
+            System.Windows.MessageBox.Show(
+                "Tembr уже запущен. Переключись на его открытое окно.",
+                "Tembr",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             Shutdown();

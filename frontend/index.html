@@ -5,17 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0c1015" />
   <meta name="color-scheme" content="dark" />
-  <title>Тембр — Voice Studio</title>
+  <title>Tembr Voice Studio</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Главное меню">
-      <a class="brand" href="#studio" aria-label="Тембр — главная">
-        <span class="brand-mark" aria-hidden="true">Т</span>
+      <a class="brand" href="#studio" aria-label="Tembr — главная">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40"><rect x="1" y="1" width="38" height="38" rx="12"/><path d="M5 21h4l3-8 4 14 5-18 5 19 4-12 3 5h2"/></svg>
+        </span>
         <span class="brand-copy">
-          <span class="brand-name">тембр</span>
+          <span class="brand-name">Tembr</span>
           <span class="brand-subtitle">VOICE STUDIO</span>
         </span>
       </a>
@@ -47,7 +49,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
         </span>
       </div>
-      <div class="sidebar-version">TEMBR <span>0.3.0</span></div>
+      <div class="sidebar-version">Tembr <span>0.1.0</span></div>
     </aside>
 
     <main class="main-area" id="studio">
@@ -182,19 +184,39 @@
                 <summary><span>Уровни сигнала</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
                 <div id="advanced-faders"></div>
               </details>
+              <div class="appearance-settings">
+                <div class="appearance-heading">Внешний вид</div>
+                <label class="appearance-field">
+                  <span>Язык</span>
+                  <select id="language-select" aria-label="Язык интерфейса">
+                    <option value="ru">Русский</option>
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                    <option value="de">Deutsch</option>
+                  </select>
+                </label>
+                <label class="appearance-field">
+                  <span>Цветовая тема</span>
+                  <select id="theme-select" aria-label="Цветовая тема">
+                    <option value="graphite">Графитовая · лайм</option>
+                    <option value="ocean">Океаническая · голубая</option>
+                    <option value="violet">Ночная · фиолетовая</option>
+                  </select>
+                </label>
+              </div>
             </section>
 
             <section class="discord-card">
               <div class="discord-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M7 7.5c3.3-1.5 6.7-1.5 10 0l1.5 9c-2.1 1.7-3.7 2-4.5 2.2l-.8-1.5M7 7.5l-1.5 9c2.1 1.7 3.7 2 4.5 2.2l.8-1.5M8.5 14h.01M15.5 14h.01M9 11.5h.01M15 11.5h.01"/></svg>
               </div>
-              <div><strong>Используешь Discord?</strong><p>Вывод Тембра → CABLE Input<br />Микрофон Discord → CABLE Output</p></div>
+              <div><strong>Используешь Discord?</strong><p>Вывод Tembr → CABLE Input<br />Микрофон Discord → CABLE Output</p></div>
             </section>
           </aside>
         </div>
 
         <footer class="app-footer">
-          <span>Тембр обрабатывает звук только на этом компьютере.</span>
+          <span>Tembr обрабатывает звук только на этом компьютере.</span>
           <span id="stream-metrics">GPU · ожидание</span>
         </footer>
       </div>
@@ -203,6 +225,7 @@
 
   <audio id="output-audio" autoplay></audio>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden><span class="toast-mark">✓</span><span id="toast-message"></span></div>
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

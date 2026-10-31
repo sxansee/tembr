@@ -1,13 +1,14 @@
 using System.Diagnostics;
 using System.IO;
-using System.Net;
 using System.Net.Http;
-using System.Net.Sockets;
 using System.Text;
+using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
+using Forms = System.Windows.Forms;
+using Drawing = System.Drawing;
 
 namespace Tembr.Desktop;
 
@@ -22,12 +23,16 @@ public partial class MainWindow : Window
         "Tembr", "logs", "tembr-desktop.log");
     private Process? _backend;
     private bool _closing;
-    private Uri AppUri { get; }
+    private bool _allowClose;
+    private readonly bool _trayIconEnabled;
+    private Forms.NotifyIcon? _trayIcon;
+    private Uri AppUri { get; } = new("http://127.0.0.1:7860/");
 
     public MainWindow()
     {
         InitializeComponent();
-        AppUri = new Uri($"http://127.0.0.1:{FindFreePort()}/");
+        _trayIconEnabled = IsTrayIconEnabled();
+        if (_trayIconEnabled) CreateTrayIcon();
         Directory.CreateDirectory(Path.GetDirectoryName(_logPath)!);
         Log("Desktop shell starting.");
     }
@@ -42,7 +47,7 @@ public partial class MainWindow : Window
         ErrorActions.Visibility = Visibility.Collapsed;
         StartupStatus.Text = "Запускаем аудиодвижок…";
         StartupDetail.Text = "Первая загрузка модели может занять несколько секунд.";
-        StartupStatus.Foreground = Brushes.White;
+        StartupStatus.Foreground = System.Windows.Media.Brushes.White;
 
         try
         {
@@ -227,6 +232,12 @@ public partial class MainWindow : Window
     private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (_closing) return;
+        if (_trayIconEnabled && !_allowClose)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
         e.Cancel = true;
         _closing = true;
         _lifetime.Cancel();
@@ -235,7 +246,57 @@ public partial class MainWindow : Window
             Browser.CoreWebView2.Navigate("about:blank");
         }
         await StopBackendAsync();
+        _trayIcon?.Dispose();
+        _trayIcon = null;
         Close();
+    }
+
+    private void CreateTrayIcon()
+    {
+        var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("Open Tembr", null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("Exit Tembr", null, (_, _) => Dispatcher.Invoke(() =>
+        {
+            _allowClose = true;
+            Close();
+        }));
+
+        Drawing.Icon icon;
+        try
+        {
+            icon = Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? Drawing.SystemIcons.Application;
+        }
+        catch
+        {
+            icon = Drawing.SystemIcons.Application;
+        }
+
+        _trayIcon = new Forms.NotifyIcon
+        {
+            Text = "Tembr Voice Studio",
+            Icon = icon,
+            ContextMenuStrip = menu,
+            Visible = true,
+        };
+        _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
+    }
+
+    private void ShowWindow()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private static bool IsTrayIconEnabled()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Tembr");
+            return Convert.ToInt32(key?.GetValue("ShowTrayIcon", 0)) == 1;
+        }
+        catch { return false; }
     }
 
     private async Task StopBackendAsync()
@@ -271,7 +332,7 @@ public partial class MainWindow : Window
     private void ShowStartupError(string message)
     {
         StartupStatus.Text = "Не удалось открыть студию";
-        StartupStatus.Foreground = new SolidColorBrush(Color.FromRgb(255, 141, 130));
+        StartupStatus.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(255, 141, 130));
         StartupDetail.Text = message;
         ErrorActions.Visibility = Visibility.Visible;
     }
@@ -306,10 +367,4 @@ public partial class MainWindow : Window
         return Environment.CurrentDirectory;
     }
 
-    private static int FindFreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
 }

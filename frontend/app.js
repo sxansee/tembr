@@ -62,13 +62,13 @@ function restoreSettings() {
       }
     }
   } catch (error) {
-    console.warn('[Тембр] Не удалось восстановить настройки:', error);
+    console.warn('[Tembr] Не удалось восстановить настройки:', error);
   }
 }
 
 function saveSettings() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.settings)); }
-  catch (error) { console.warn('[Тембр] Не удалось сохранить настройки:', error); }
+  catch (error) { console.warn('[Tembr] Не удалось сохранить настройки:', error); }
 }
 
 function formatFaderValue(fader, value) {
@@ -175,6 +175,9 @@ function drawWave() {
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, width, height);
   const count = Math.max(48, Math.floor(rect.width / 7));
+  const palette = getComputedStyle(document.documentElement);
+  const accentRgb = palette.getPropertyValue('--accent-rgb').trim();
+  const tealRgb = palette.getPropertyValue('--teal-rgb').trim();
   const center = height * 0.5;
   const spacing = width / count;
   const activeLevel = Math.max(state.inputLevel, state.outputLevel);
@@ -187,7 +190,7 @@ function drawWave() {
     const barHeight = Math.max(2, height * heightRatio * 0.66);
     const x = i * spacing + spacing * 0.34;
     const alpha = 0.32 + envelope * 0.55;
-    context.fillStyle = i > count * 0.69 ? `rgba(217,255,114,${alpha})` : `rgba(101,214,202,${alpha})`;
+    context.fillStyle = i > count * 0.69 ? `rgba(${accentRgb},${alpha})` : `rgba(${tealRgb},${alpha})`;
     context.beginPath();
     context.roundRect(x, center - barHeight / 2, Math.max(1, spacing * 0.34), barHeight, 2 * pixelRatio);
     context.fill();
@@ -276,6 +279,10 @@ async function loadVoiceList() {
 }
 
 function pluralVoices(count) {
+  const locale = document.documentElement.lang;
+  if (locale === 'en') return `${count} ${count === 1 ? 'voice' : 'voices'}`;
+  if (locale === 'es') return `${count} ${count === 1 ? 'voz' : 'voces'}`;
+  if (locale === 'de') return `${count} ${count === 1 ? 'Stimme' : 'Stimmen'}`;
   const mod10 = count % 10;
   const mod100 = count % 100;
   if (mod10 === 1 && mod100 !== 11) return `${count} голос`;
@@ -387,7 +394,7 @@ async function loadVoice(voice) {
     setConnectionStatus('Движок готов', 'ready');
     return true;
   } catch (error) {
-    console.error('[Тембр] Не удалось загрузить модель:', error);
+    console.error('[Tembr] Не удалось загрузить модель:', error);
     showNotice('Не удалось загрузить голос', error.message);
     setConnectionStatus('Ошибка модели', 'error');
     return false;
@@ -508,7 +515,7 @@ function connectWS() {
             `${gpu} · инференс ${message.inference_ms ?? '—'} мс · пропуски ${state.droppedChunks}`;
         } else if (message.type === 'error') {
           state.inFlight = false;
-          console.error('[Тембр] Ошибка конвертации:', message.message);
+          console.error('[Tembr] Ошибка конвертации:', message.message);
           setConnectionStatus(`Ошибка конвертации: ${message.message}`, 'error');
           showNotice('Ошибка обработки голоса', message.message);
         }
@@ -529,7 +536,7 @@ function readStoredDevice(key) {
 
 function storeDevice(key, value) {
   try { localStorage.setItem(`tembr.device.${key}`, value); }
-  catch (error) { console.warn('[Тембр] Не удалось сохранить аудиоустройство:', error); }
+  catch (error) { console.warn('[Tembr] Не удалось сохранить аудиоустройство:', error); }
 }
 
 async function startAudio() {
@@ -595,7 +602,7 @@ async function startAudio() {
     try {
       await output.setSinkId(outputDeviceId);
     } catch (error) {
-      console.warn('[Тембр] Выходное устройство пока не разрешено:', error);
+      console.warn('[Tembr] Выходное устройство пока не разрешено:', error);
       showNotice('Голос пока идёт на системный выход', 'После запуска выбери устройство в списке и подтверди его в появившемся окне выбора звука.');
     }
   }
@@ -613,7 +620,7 @@ async function releaseAudio(closeSocket = true) {
   const audioContext = state.audioCtx;
   state.audioCtx = null;
   if (audioContext && audioContext.state !== 'closed') {
-    try { await audioContext.close(); } catch (error) { console.warn('[Тембр] Не удалось закрыть AudioContext:', error); }
+    try { await audioContext.close(); } catch (error) { console.warn('[Tembr] Не удалось закрыть AudioContext:', error); }
   }
   state.mediaStream = null;
   state.captureNode = null;
@@ -650,7 +657,7 @@ async function toggleAudio() {
     state.running = true;
     setConnectionStatus('Обработка звука', 'running');
   } catch (error) {
-    console.error('[Тембр] Не удалось начать обработку:', error);
+    console.error('[Tembr] Не удалось начать обработку:', error);
     await releaseAudio(true);
     state.running = false;
     const permissionError = error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError';
@@ -687,7 +694,7 @@ async function populateDevices() {
       notice.hidden = true;
     }
   } catch (error) {
-    console.warn('[Тембр] Не удалось получить список устройств:', error);
+    console.warn('[Tembr] Не удалось получить список устройств:', error);
     const notice = document.getElementById('device-notice');
     notice.textContent = 'Не удалось получить список аудиоустройств. Проверь разрешение на микрофон в Windows.';
     notice.hidden = false;
@@ -878,7 +885,7 @@ async function init() {
     await populateDevices();
     setConnectionStatus(state.cudaAvailable ? 'Движок готов' : 'NVIDIA GPU недоступна', state.cudaAvailable ? 'ready' : 'error');
   } catch (error) {
-    console.error('[Тембр] Не удалось подготовить студию:', error);
+    console.error('[Tembr] Не удалось подготовить студию:', error);
     setConnectionStatus('Ошибка подключения', 'error');
     showNotice('Не удалось загрузить студию', error.message);
   }
@@ -889,5 +896,10 @@ async function init() {
   }
   window.addEventListener('pagehide', () => { void releaseAudio(true); });
 }
+
+window.addEventListener('tembr:localechange', () => {
+  if (document.getElementById('voice-count')) renderVoices();
+  if (document.getElementById('status-text')) updateLiveState();
+});
 
 init();

@@ -1,5 +1,5 @@
 """
-main.py — бэкенд "Тембр"
+main.py — Tembr voice engine
 
 FastAPI + WebSocket поверх inferrvc. Тот же движок конвертации (RVC),
 но собственный, документированный протокол вместо закрытого Socket.IO
@@ -38,7 +38,7 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 manager = ModelManager(model_dir=str(MODEL_DIR), index_dir=str(MODEL_DIR))
 
-app = FastAPI(title="Тембр — voice engine", version="0.2.0")
+app = FastAPI(title="Tembr — Voice Engine", version="0.1.0")
 MAX_MODEL_BYTES = 1024 * 1024 * 1024
 MAX_INDEX_BYTES = 2 * 1024 * 1024 * 1024
 ALLOWED_PITCH = (-24, 24)
@@ -65,11 +65,11 @@ def autoload_default_model():
     if path.exists():
         try:
             name = manager.load(DEFAULT_MODEL)
-            print(f"[Тембр] Загружена модель по умолчанию: {name}")
+            print(f"[Tembr] Загружена модель по умолчанию: {name}")
         except Exception as e:
-            print(f"[Тембр] Не удалось автозагрузить {DEFAULT_MODEL}: {e}")
+            print(f"[Tembr] Не удалось автозагрузить {DEFAULT_MODEL}: {e}")
     else:
-        print(f"[Тембр] {DEFAULT_MODEL} не найден в {MODEL_DIR}/ — используй POST /model/load")
+        print(f"[Tembr] {DEFAULT_MODEL} не найден в {MODEL_DIR}/ — используй POST /model/load")
 
 
 @app.get("/health")
