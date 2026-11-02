@@ -24,6 +24,7 @@ const state = {
   playbackNode: null,
   mediaStream: null,
   activeName: null,
+  defaultName: null,
   droppedChunks: 0,
   inputLevel: 0,
   outputLevel: 0,
@@ -275,6 +276,7 @@ async function loadVoiceList() {
     index: voice.index,
   }));
   state.activeName = data.active || null;
+  state.defaultName = data.default || null;
   renderVoices();
 }
 
@@ -975,7 +977,8 @@ async function init() {
     await loadEngineStatus();
     await loadVoiceList();
     if (!state.activeName && VOICES.length) {
-      const loaded = await loadVoice(VOICES[0]);
+      const preferredVoice = VOICES.find((voice) => voice.name === state.defaultName) || VOICES[0];
+      const loaded = await loadVoice(preferredVoice);
       if (loaded) renderVoices();
     }
     await populateDevices();

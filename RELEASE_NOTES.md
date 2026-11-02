@@ -1,3 +1,9 @@
+Tembr 0.1.2 opens the studio sooner and keeps the command window out of normal launches.
+
+- Installed shortcuts start the desktop app directly after the audio environment has been set up, skipping the repeated Python/CUDA verification.
+- The studio appears before the voice model finishes loading; the default voice is then loaded automatically in the interface.
+- First-time dependency setup remains visible so progress and setup errors are clear.
+
 Tembr 0.1.1 fixes model library management.
 
 - Attach an `.index` file to a model already in the library without uploading its `.pth` again.

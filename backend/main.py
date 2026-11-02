@@ -59,19 +59,6 @@ async def reject_cross_origin_requests(request, call_next):
     return await call_next(request)
 
 
-@app.on_event("startup")
-def autoload_default_model():
-    path = MODEL_DIR / DEFAULT_MODEL
-    if path.exists():
-        try:
-            name = manager.load(DEFAULT_MODEL)
-            print(f"[Tembr] Загружена модель по умолчанию: {name}")
-        except Exception as e:
-            print(f"[Tembr] Не удалось автозагрузить {DEFAULT_MODEL}: {e}")
-    else:
-        print(f"[Tembr] {DEFAULT_MODEL} не найден в {MODEL_DIR}/ — используй POST /model/load")
-
-
 @app.get("/health")
 def health():
     import torch
@@ -113,7 +100,11 @@ def list_models():
             "file": pth.name,
             "index": matching_index.stem if matching_index else None,
         })
-    return {"voices": voices, "active": manager.active_name}
+    default_voice = next(
+        (voice["name"] for voice in voices if voice["file"] == DEFAULT_MODEL),
+        voices[0]["name"] if voices else None,
+    )
+    return {"voices": voices, "active": manager.active_name, "default": default_voice}
 
 
 @app.post("/model/upload")
