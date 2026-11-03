@@ -1,9 +1,9 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.2"
+  #define AppVersion "0.1.3"
 #endif
 
 #define AppName "Tembr"
-#define AppPublisher "Tembr"
+#define AppPublisher "sxansee"
 #define AppExe "Tembr.exe"
 
 [Setup]
@@ -55,7 +55,7 @@ Name: "{autoprograms}\Tembr"; Filename: "{sys}\wscript.exe"; Parameters: """{app
 Name: "{autoprograms}\Uninstall Tembr"; Filename: "{uninstallexe}"; Tasks: startmenuicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Tembr"; ValueData: """{sys}\wscript.exe"" ""{app}\TembrLauncher.vbs"""; Tasks: startup; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Tembr"; ValueData: """{app}\desktop\publish\{#AppExe}"""; Tasks: startup; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Tembr"; Tasks: not startup; Flags: deletevalue
 Root: HKCU; Subkey: "Software\Tembr"; ValueType: dword; ValueName: "ShowTrayIcon"; ValueData: "1"; Tasks: trayicon; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Tembr"; ValueType: dword; ValueName: "ShowTrayIcon"; ValueData: "0"; Tasks: not trayicon; Flags: uninsdeletevalue

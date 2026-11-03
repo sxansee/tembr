@@ -11,7 +11,8 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <AssemblyName>Tembr</AssemblyName>
     <RootNamespace>Tembr.Desktop</RootNamespace>
-    <Version>0.1.2</Version>
+    <Version>0.1.3</Version>
+    <Company>sxansee</Company>
     <Product>Tembr</Product>
     <Title>Tembr Voice Studio</Title>
     <ApplicationIcon>app.ico</ApplicationIcon>

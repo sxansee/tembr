@@ -1,3 +1,8 @@
+Tembr 0.1.3 identifies itself by name in Windows startup apps.
+
+- The startup entry launches `Tembr.exe` directly, so Windows lists Tembr instead of Windows Script Host.
+- Windows executable and installer publisher metadata now use `sxansee`.
+
 Tembr 0.1.2 opens the studio sooner and keeps the command window out of normal launches.
 
 - Installed shortcuts start the desktop app directly after the audio environment has been set up, skipping the repeated Python/CUDA verification.
